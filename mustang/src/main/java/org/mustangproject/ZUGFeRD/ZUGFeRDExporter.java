@@ -81,9 +81,15 @@ public class ZUGFeRDExporter implements Closeable {
 	 * @throws javax.xml.bind.JAXBException
 	 *
 	 */
+	@Deprecated
 	public ZUGFeRDExporter() throws JAXBException {
+		this(null);
+	}
+
+	ZUGFeRDExporter(PDDocument doc) throws JAXBException {
+		this.doc = doc;
 		jaxbContext = JAXBContext
-				.newInstance("org.mustangproject.ZUGFeRD.model");
+			.newInstance("org.mustangproject.ZUGFeRD.model");
 		marshaller = jaxbContext.createMarshaller();
 		marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
 		marshaller.setProperty(Marshaller.JAXB_ENCODING, "UTF-8");
@@ -222,11 +228,8 @@ public class ZUGFeRDExporter implements Closeable {
 	}
 
 	// // MAIN CLASS
-	private String conformanceLevel = "U";
-	private String versionStr = "1.3.0";
 
-	// BASIC, COMFORT etc - may be set from outside.
-	private String ZUGFeRDConformanceLevel = null;
+
 
 	/**
 	 * Data (XML invoice) to be added to the ZUGFeRD PDF. It may be externally
@@ -237,7 +240,6 @@ public class ZUGFeRDExporter implements Closeable {
 	byte[] zugferdData = null;
 	private boolean isTest;
 	IZUGFeRDExportableTransaction trans = null;
-	private boolean ignoreA1Errors;
 	private PDDocument doc;
 	private String currency = "EUR";
 
@@ -302,24 +304,6 @@ public class ZUGFeRDExporter implements Closeable {
 	}
 
 	/**
-	 * All files are PDF/A-3, setConformance refers to the level conformance.
-	 *
-	 * PDF/A-3 has three coformance levels, called "A", "U" and "B".
-	 *
-	 * PDF/A-3-B where B means only visually preservable, U -standard for
-	 * Mustang- means visually and unicode preservable and A means full
-	 * compliance, i.e. visually, unicode and structurally preservable and
-	 * tagged PDF, i.e. useful metainformation for blind people.
-	 *
-	 * Feel free to pass "A" as new level if you know what you are doing :-)
-	 *
-	 *
-	 */
-	public void setConformanceLevel(String newLevel) {
-		conformanceLevel = newLevel;
-	}
-
-	/**
 	 * enables the flag to indicate a test invoice in the XML structure
 	 *
 	 */
@@ -327,84 +311,8 @@ public class ZUGFeRDExporter implements Closeable {
 		isTest = true;
 	}
 
-	public void ignoreA1Errors() {
-		ignoreA1Errors = true;
-	}
 
-	private boolean getA1ParserValidationResult(PreflightParser parser) {
-		ValidationResult result = null;
-
-		try {
-
-			/*
-			 * Parse the PDF file with PreflightParser that inherits from the
-			 * NonSequentialParser. Some additional controls are present to
-			 * check a set of PDF/A requirements. (Stream length consistency,
-			 * EOL after some Keyword...)
-			 */
-			parser.parse();
-
-			/*
-			 * Once the syntax validation is done, the parser can provide a
-			 * PreflightDocument (that inherits from PDDocument) This document
-			 * process the end of PDF/A validation.
-			 */
-			PreflightDocument document = parser.getPreflightDocument();
-			document.validate();
-
-			// Get validation result
-			result = document.getResult();
-			document.close();
-
-		} catch (ValidationException e) {
-			/*
-			 * the parse method can throw a SyntaxValidationException if the PDF
-			 * file can't be parsed. In this case, the exception contains an
-			 * instance of ValidationResult
-			 */
-			return false;
-		} catch (IOException e) {
-			return false;
-		}
-
-		// display validation result
-		return result.isValid();
-
-	}
-
-	public boolean isValidA1(String filename) {
-		FileDataSource fd = new FileDataSource(filename);
-		PreflightParser parser;
-		try {
-			parser = new PreflightParser(fd);
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-			return false;
-		}
-
-		return getA1ParserValidationResult(parser);
-	}
-
-	/***
-	 * Will return a boolean if the inputstream is valid PDF/A-1 and close the input stream
-	 * @param file
-	 * @return
-	 */
-	public boolean isValidA1(InputStream file) {
-		
-            ByteArrayDataSource fd;
-            try {
-                    fd = new ByteArrayDataSource(file);
-                    PreflightParser parser = new PreflightParser(fd);
-                    return getA1ParserValidationResult(parser);
-            } catch (IOException e) {
-                    // TODO Auto-generated catch block
-                    e.printStackTrace();
-                    return false;
-            }
-        }
-
+	@Deprecated
 	public void loadPDFA3(String filename) {
 
 		try {
@@ -418,11 +326,14 @@ public class ZUGFeRDExporter implements Closeable {
 
 	}
 
+	public static ZUGFeRDExporter createFromPDFA3(String filename) throws IOException, JAXBException {
+		return new ZUGFeRDExporter(PDDocument.load(new File(filename)));
+	}
+
 	public void loadPDFA3(InputStream file) {
 
 		try {
 			doc = PDDocument.load(file);
-
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -430,114 +341,8 @@ public class ZUGFeRDExporter implements Closeable {
 
 	}
 
-	/**
-	 * Makes A PDF/A3a-compliant document from a PDF-A1 compliant document (on
-	 * the metadata level, this will not e.g. convert graphics to JPG-2000)
-	 *
-	 */
-	public PDDocumentCatalog PDFmakeA3compliant(String filename,
-			String producer, String creator, boolean attachZugferdHeaders)
-			throws IOException, TransformerException {
-
-		if (!ignoreA1Errors && !isValidA1(filename)) {
-			throw new IOException("File is not a valid PDF/A-1 input file");
-		}
-		loadPDFA3(filename);
-
-		return makeDocPDFA3compliant(producer, creator, attachZugferdHeaders);
-	}
-
-	public PDDocumentCatalog PDFmakeA3compliant(InputStream file,
-			String producer, String creator, boolean attachZugferdHeaders)
-			throws IOException, TransformerException {
-		/* cache the file content in memory, unfortunately the next step, isValidA1,
-		 * will close the input stream but the step thereafter (loadPDFA3) needs
-		 * and open one*/
-		ByteArrayOutputStream baos = new ByteArrayOutputStream();
-		byte[] buf = new byte[1024];
-		int n = 0;
-		while ((n = file.read(buf)) >= 0)
-		    baos.write(buf, 0, n);
-		byte[] content = baos.toByteArray();
-
-		InputStream is1 = new ByteArrayInputStream(content);
-		if (!ignoreA1Errors && !isValidA1(is1)) {
-			throw new IOException("File is not a valid PDF/A-1 input file");
-		}
-		InputStream is2 = new ByteArrayInputStream(content);
-		loadPDFA3(is2);
-
-		return makeDocPDFA3compliant(producer, creator, attachZugferdHeaders);
-	}	
-	private PDDocumentCatalog makeDocPDFA3compliant(String producer,
-			String creator, boolean attachZugferdHeaders) throws IOException,
-			TransformerException {
-		String fullProducer = producer + " (via mustangproject.org "
-				+ versionStr + ")";
-
-		PDDocumentCatalog cat = doc.getDocumentCatalog();
-		PDMetadata metadata = new PDMetadata(doc);
-		cat.setMetadata(metadata);
-		XMPMetadata xmp = XMPMetadata.createXMPMetadata();
-
-                
-		PDFAIdentificationSchema pdfaid = new PDFAIdentificationSchema(xmp);
-                
-		xmp.addSchema(pdfaid);
-
-		DublinCoreSchema dc = xmp.createAndAddDublinCoreSchema();
-                
-		dc.addCreator(creator);
-                
-		XMPBasicSchema xsb = xmp.createAndAddXMPBasicSchema();
-                
-		xsb.setCreatorTool(creator);
-		xsb.setCreateDate(GregorianCalendar.getInstance());
-		// PDDocumentInformation pdi=doc.getDocumentInformation();
-		PDDocumentInformation pdi = new PDDocumentInformation();
-		pdi.setProducer(fullProducer);
-		pdi.setAuthor(creator);
-		doc.setDocumentInformation(pdi);
-
-		AdobePDFSchema pdf = xmp.createAndAddAdobePDFSchema();
-		pdf.setProducer(fullProducer);
-
-                /*
-                * // Mandatory: PDF/A3-a is tagged PDF which has to be expressed using
-                * a // MarkInfo dictionary (PDF A/3 Standard sec. 6.7.2.2) PDMarkInfo
-                * markinfo = new PDMarkInfo(); markinfo.setMarked(true);
-                * doc.getDocumentCatalog().setMarkInfo(markinfo);
-                */
-                /*
-                *
-                * To be on the safe side, we use level B without Markinfo because we
-                * can not guarantee that the user correctly tagged the templates for
-                * the PDF.
-                */
-                try {
-                    pdfaid.setConformance(conformanceLevel);//$NON-NLS-1$ //$NON-NLS-1$
-                } catch (BadFieldValueException ex) {
-                    Logger.getLogger(ZUGFeRDExporter.class.getName()).log(Level.SEVERE, null, ex);
-                }
-
-		pdfaid.setPart(3);
-
-		if (attachZugferdHeaders) {
-			addZugferdXMP(xmp); /*
-								 * this is the only line where we do something
-								 * Zugferd-specific, i.e. add PDF metadata
-								 * specifically for Zugferd, not generically for
-								 * a embedded file
-								 */
-
-		}
-
-                XmpSerializer serializer = new XmpSerializer();
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                serializer.serialize(xmp, baos, false);
-                metadata.importXMPMetadata( baos.toByteArray() );
-                
-		return cat;
+	public static ZUGFeRDExporter createFromPDFA3(InputStream pdfSource) throws IOException, JAXBException {
+		return new ZUGFeRDExporter(PDDocument.load(pdfSource));
 	}
 
 	public void close() throws IOException {
@@ -1520,35 +1325,8 @@ public class ZUGFeRDExporter implements Closeable {
 		this.zugferdData = zugferdData;
 	}
 
-	/**
-	 * Sets the ZUGFeRD conformance level (override).
-	 *
-	 * @param ZUGFeRDConformanceLevel
-	 *            the new conformance level
-	 */
-	public void setZUGFeRDConformanceLevel(String ZUGFeRDConformanceLevel) {
-		this.ZUGFeRDConformanceLevel = ZUGFeRDConformanceLevel;
-	}
 
-	/**
-	 * * This will add both the RDF-indication which embedded file is Zugferd
-	 * and the neccessary PDF/A schema extension description to be able to add
-	 * this information to RDF
-	 *
-	 * @param metadata
-	 */
-	private void addZugferdXMP(XMPMetadata metadata) {
 
-		XMPSchemaZugferd zf = new XMPSchemaZugferd(metadata,
-				this.ZUGFeRDConformanceLevel);
-
-		metadata.addSchema(zf);
-
-		XMPSchemaPDFAExtensions pdfaex = new XMPSchemaPDFAExtensions(metadata);
-                
-		metadata.addSchema(pdfaex);
-
-	}
 
 	/****
 	 * Returns the PDFBox PDF Document
